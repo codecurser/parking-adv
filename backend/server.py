@@ -287,6 +287,10 @@ async def get_parking_records():
     """Get all parking records"""
     try:
         records = await db.parking_records.find().sort("entry_time", -1).to_list(100)
+        # Convert ObjectId to string for JSON serialization
+        for record in records:
+            if "_id" in record:
+                record["_id"] = str(record["_id"])
         return records
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get records: {str(e)}")
