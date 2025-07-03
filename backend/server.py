@@ -268,6 +268,8 @@ async def vehicle_exit(vehicle_number: str):
         
         # Return updated record
         updated_record = await db.parking_records.find_one({"id": parking_record["id"]})
+        if "_id" in updated_record:
+            updated_record["_id"] = str(updated_record["_id"])
         return {
             "vehicle_number": updated_record["vehicle_number"],
             "entry_time": updated_record["entry_time"],
