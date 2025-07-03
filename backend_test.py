@@ -19,6 +19,11 @@ class SmartParkingAPITest(unittest.TestCase):
         print(f"\nTesting with API URL: {self.api_url}")
         print(f"Using test vehicle number: {self.test_vehicle_number}")
         
+    def __init__(self, methodName='runTest'):
+        super().__init__(methodName)
+        self.api_url = BACKEND_URL
+        self.test_vehicle_number = f"TEST{int(time.time())}"
+        
     def test_01_api_health(self):
         """Test API health endpoint"""
         print("\n🔍 Testing API health...")
