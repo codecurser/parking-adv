@@ -176,6 +176,88 @@ class SmartParkingAPITest(unittest.TestCase):
         self.assertEqual(exit_response.status_code, 200)
         print("✅ Exit processed for cleanup")
         
+    def test_06_objectid_serialization(self):
+        """Test ObjectId serialization fix in API responses"""
+        print("\n🔍 Testing ObjectId serialization in API responses...")
+        
+        # 1. Test parking records endpoint
+        print("Testing GET /api/parking/records...")
+        records_response = requests.get(f"{self.api_url}/parking/records")
+        self.assertEqual(records_response.status_code, 200)
+        records_data = records_response.json()
+        
+        # Check if we have records to test
+        if records_data:
+            # Verify each record has _id as string
+            for record in records_data:
+                if "_id" in record:
+                    self.assertIsInstance(record["_id"], str, "ObjectId not serialized to string")
+            print("✅ ObjectId serialization in parking records verified")
+        else:
+            print("⚠️ No parking records to verify ObjectId serialization")
+        
+        # 2. Test active parking endpoint
+        print("Testing GET /api/parking/active...")
+        active_response = requests.get(f"{self.api_url}/parking/active")
+        self.assertEqual(active_response.status_code, 200)
+        active_data = active_response.json()
+        
+        # Verify each active record has _id as string
+        if active_data:
+            for record in active_data:
+                if "_id" in record:
+                    self.assertIsInstance(record["_id"], str, "ObjectId not serialized to string")
+            print("✅ ObjectId serialization in active parking verified")
+        else:
+            print("⚠️ No active parking to verify ObjectId serialization")
+        
+    def test_07_ocr_fallback(self):
+        """Test OCR fallback functionality"""
+        print("\n🔍 Testing OCR fallback functionality...")
+        
+        # Create a test image with text
+        image = self.create_test_image_with_text(self.test_vehicle_number)
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG")
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        
+        # Test file upload OCR endpoint
+        print("Testing POST /api/ocr/analyze...")
+        files = {'file': ('test_plate.jpg', buffered.getvalue(), 'image/jpeg')}
+        buffered.seek(0)  # Reset buffer position
+        
+        file_response = requests.post(
+            f"{self.api_url}/ocr/analyze",
+            files=files
+        )
+        
+        self.assertEqual(file_response.status_code, 200)
+        file_data = file_response.json()
+        print(f"OCR File Upload Result: {file_data}")
+        
+        # Verify OCR response structure
+        self.assertIn("vehicle_number", file_data)
+        self.assertIn("confidence", file_data)
+        self.assertIn("all_text", file_data)
+        
+        # Test base64 OCR endpoint
+        print("Testing POST /api/ocr/analyze-base64...")
+        base64_response = requests.post(
+            f"{self.api_url}/ocr/analyze-base64",
+            json={"image": img_base64}
+        )
+        
+        self.assertEqual(base64_response.status_code, 200)
+        base64_data = base64_response.json()
+        print(f"OCR Base64 Result: {base64_data}")
+        
+        # Verify OCR response structure
+        self.assertIn("vehicle_number", base64_data)
+        self.assertIn("confidence", base64_data)
+        self.assertIn("all_text", base64_data)
+        
+        print("✅ OCR endpoints with fallback functionality verified")
+        
     def create_test_image_with_text(self, text):
         """Create a test image with the given text"""
         # Create a blank image with white background
