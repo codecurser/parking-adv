@@ -5,47 +5,21 @@ import './App.css';
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const SmartParkingSystem = () => {
+const CameraComponent = ({ title, mode, onProcessVehicle, disabled }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [ocrResult, setOcrResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [parkingRecords, setParkingRecords] = useState([]);
-  const [activeVehicles, setActiveVehicles] = useState([]);
-  const [stats, setStats] = useState({});
-  const [mode, setMode] = useState('entry'); // 'entry' or 'exit'
-  const [currentTab, setCurrentTab] = useState('scanner'); // 'scanner', 'records', 'active'
-
-  // Fetch parking data
-  const fetchParkingData = useCallback(async () => {
-    try {
-      const [recordsRes, activeRes, statsRes] = await Promise.all([
-        axios.get(`${API}/parking/records`),
-        axios.get(`${API}/parking/active`),
-        axios.get(`${API}/parking/stats`)
-      ]);
-      
-      setParkingRecords(recordsRes.data);
-      setActiveVehicles(activeRes.data);
-      setStats(statsRes.data);
-    } catch (err) {
-      console.error('Failed to fetch parking data:', err);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchParkingData();
-  }, [fetchParkingData]);
+  const [lastCapture, setLastCapture] = useState(null);
 
   // Start camera stream
   const startCamera = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { 
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 640 },
+          height: { ideal: 480 },
           facingMode: 'environment'
         }
       });
@@ -70,9 +44,9 @@ const SmartParkingSystem = () => {
     }
   }, []);
 
-  // Capture and analyze image
-  const captureAndAnalyze = useCallback(async () => {
-    if (!videoRef.current || !canvasRef.current) return;
+  // Capture and process vehicle
+  const captureAndProcess = useCallback(async () => {
+    if (!videoRef.current || !canvasRef.current || loading || disabled) return;
 
     setLoading(true);
     setError(null);
@@ -89,83 +63,212 @@ const SmartParkingSystem = () => {
       const imageData = canvas.toDataURL('image/jpeg', 0.8);
       const base64Data = imageData.split(',')[1];
 
+      // Store the captured image for display
+      setLastCapture(imageData);
+
+      // Process OCR
       const response = await axios.post(`${API}/ocr/analyze-base64`, {
         image: base64Data
       });
 
-      setOcrResult(response.data);
+      if (response.data.vehicle_number) {
+        await onProcessVehicle(response.data.vehicle_number, mode);
+      } else {
+        setError('No license plate detected. Please try again.');
+      }
+
     } catch (err) {
-      setError('OCR analysis failed: ' + err.message);
+      setError('Processing failed: ' + err.message);
     } finally {
       setLoading(false);
     }
+  }, [loading, disabled, onProcessVehicle, mode]);
+
+  // Auto-capture every 5 seconds when streaming
+  useEffect(() => {
+    if (isStreaming && !loading && !disabled) {
+      const interval = setInterval(() => {
+        captureAndProcess();
+      }, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isStreaming, loading, disabled, captureAndProcess]);
+
+  return (
+    <div className={`camera-section ${mode}`}>
+      <div className="camera-header">
+        <h3>{title}</h3>
+        <div className="camera-status">
+          {isStreaming ? (
+            <span className="status-active">🟢 Active</span>
+          ) : (
+            <span className="status-inactive">🔴 Inactive</span>
+          )}
+        </div>
+      </div>
+
+      <div className="camera-controls">
+        {!isStreaming ? (
+          <button onClick={startCamera} className="btn-primary">
+            📷 Start {title}
+          </button>
+        ) : (
+          <div className="camera-actions">
+            <button onClick={captureAndProcess} disabled={loading || disabled} className="btn-primary">
+              {loading ? '🔄 Processing...' : '📸 Capture Now'}
+            </button>
+            <button onClick={stopCamera} className="btn-secondary">
+              ⏹️ Stop Camera
+            </button>
+          </div>
+        )}
+      </div>
+
+      {error && (
+        <div className="error-message">
+          ⚠️ {error}
+        </div>
+      )}
+
+      <div className="camera-feed">
+        {isStreaming && (
+          <video 
+            ref={videoRef} 
+            autoPlay 
+            playsInline 
+            className="video-stream"
+          />
+        )}
+        {lastCapture && (
+          <div className="last-capture">
+            <h4>Last Capture:</h4>
+            <img src={lastCapture} alt="Last capture" className="capture-preview" />
+          </div>
+        )}
+        <canvas 
+          ref={canvasRef} 
+          style={{ display: 'none' }}
+        />
+      </div>
+
+      {loading && (
+        <div className="processing-indicator">
+          <div className="loading-spinner"></div>
+          <p>Processing vehicle...</p>
+        </div>
+      )}
+    </div>
+  );
+};
+
+const SmartParkingSystem = () => {
+  const [parkingRecords, setParkingRecords] = useState([]);
+  const [activeVehicles, setActiveVehicles] = useState([]);
+  const [stats, setStats] = useState({});
+  const [currentTab, setCurrentTab] = useState('cameras');
+  const [systemStatus, setSystemStatus] = useState('active');
+  const [recentActivity, setRecentActivity] = useState([]);
+
+  // Fetch parking data
+  const fetchParkingData = useCallback(async () => {
+    try {
+      const [recordsRes, activeRes, statsRes] = await Promise.all([
+        axios.get(`${API}/parking/records`),
+        axios.get(`${API}/parking/active`),
+        axios.get(`${API}/parking/stats`)
+      ]);
+      
+      setParkingRecords(recordsRes.data);
+      setActiveVehicles(activeRes.data);
+      setStats(statsRes.data);
+    } catch (err) {
+      console.error('Failed to fetch parking data:', err);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchParkingData();
+    // Refresh data every 10 seconds
+    const interval = setInterval(fetchParkingData, 10000);
+    return () => clearInterval(interval);
+  }, [fetchParkingData]);
 
   // Process vehicle entry
   const processVehicleEntry = useCallback(async (vehicleNumber) => {
-    setLoading(true);
-    setError(null);
-
     try {
       const response = await axios.post(`${API}/parking/entry?vehicle_number=${vehicleNumber}`);
-      setOcrResult(null);
+      
+      // Add to recent activity
+      setRecentActivity(prev => [
+        { 
+          type: 'entry', 
+          vehicle: vehicleNumber, 
+          time: new Date().toLocaleTimeString(),
+          message: `Vehicle ${vehicleNumber} entered parking`
+        },
+        ...prev.slice(0, 4)
+      ]);
+
       fetchParkingData();
-      alert(`Vehicle ${vehicleNumber} entry recorded successfully!`);
+      return true;
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to record entry');
-    } finally {
-      setLoading(false);
+      console.error('Entry failed:', err);
+      setRecentActivity(prev => [
+        { 
+          type: 'error', 
+          vehicle: vehicleNumber, 
+          time: new Date().toLocaleTimeString(),
+          message: `Entry failed: ${err.response?.data?.detail || 'Unknown error'}`
+        },
+        ...prev.slice(0, 4)
+      ]);
+      return false;
     }
   }, [fetchParkingData]);
 
   // Process vehicle exit
   const processVehicleExit = useCallback(async (vehicleNumber) => {
-    setLoading(true);
-    setError(null);
-
     try {
       const response = await axios.post(`${API}/parking/exit?vehicle_number=${vehicleNumber}`);
-      setOcrResult(null);
-      fetchParkingData();
       
       const exitData = response.data;
-      alert(`Vehicle ${vehicleNumber} exit processed!
-Entry: ${new Date(exitData.entry_time).toLocaleString()}
-Exit: ${new Date(exitData.exit_time).toLocaleString()}
-Duration: ${exitData.duration_minutes} minutes
-Total Fee: ₹${exitData.total_fee.toFixed(2)}`);
+      
+      // Add to recent activity
+      setRecentActivity(prev => [
+        { 
+          type: 'exit', 
+          vehicle: vehicleNumber, 
+          time: new Date().toLocaleTimeString(),
+          message: `Vehicle ${vehicleNumber} exited - Fee: ₹${exitData.total_fee?.toFixed(2) || 0}`
+        },
+        ...prev.slice(0, 4)
+      ]);
+
+      fetchParkingData();
+      return true;
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to record exit');
-    } finally {
-      setLoading(false);
+      console.error('Exit failed:', err);
+      setRecentActivity(prev => [
+        { 
+          type: 'error', 
+          vehicle: vehicleNumber, 
+          time: new Date().toLocaleTimeString(),
+          message: `Exit failed: ${err.response?.data?.detail || 'Unknown error'}`
+        },
+        ...prev.slice(0, 4)
+      ]);
+      return false;
     }
   }, [fetchParkingData]);
 
-  // File upload handler
-  const handleFileUpload = useCallback(async (event) => {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await axios.post(`${API}/ocr/analyze`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-
-      setOcrResult(response.data);
-    } catch (err) {
-      setError('File upload failed: ' + err.message);
-    } finally {
-      setLoading(false);
+  // Handle vehicle processing from cameras
+  const handleVehicleProcess = useCallback(async (vehicleNumber, mode) => {
+    if (mode === 'entry') {
+      return await processVehicleEntry(vehicleNumber);
+    } else {
+      return await processVehicleExit(vehicleNumber);
     }
-  }, []);
+  }, [processVehicleEntry, processVehicleExit]);
 
   const formatDateTime = (dateString) => {
     return new Date(dateString).toLocaleString();
@@ -182,6 +285,11 @@ Total Fee: ₹${exitData.total_fee.toFixed(2)}`);
     <div className="smart-parking-system">
       <header className="header">
         <h1>🚗 Smart Parking System</h1>
+        <div className="system-status">
+          <span className={`status-indicator ${systemStatus}`}>
+            {systemStatus === 'active' ? '🟢 System Active' : '🔴 System Inactive'}
+          </span>
+        </div>
         <div className="stats-bar">
           <div className="stat">
             <span className="stat-label">Active Vehicles</span>
@@ -200,10 +308,10 @@ Total Fee: ₹${exitData.total_fee.toFixed(2)}`);
 
       <nav className="tabs">
         <button 
-          className={currentTab === 'scanner' ? 'active' : ''}
-          onClick={() => setCurrentTab('scanner')}
+          className={currentTab === 'cameras' ? 'active' : ''}
+          onClick={() => setCurrentTab('cameras')}
         >
-          📷 Scanner
+          📷 Live Cameras
         </button>
         <button 
           className={currentTab === 'active' ? 'active' : ''}
@@ -219,119 +327,38 @@ Total Fee: ₹${exitData.total_fee.toFixed(2)}`);
         </button>
       </nav>
 
-      {currentTab === 'scanner' && (
-        <div className="scanner-section">
-          <div className="mode-selector">
-            <button 
-              className={mode === 'entry' ? 'active' : ''}
-              onClick={() => setMode('entry')}
-            >
-              🚪 Entry
-            </button>
-            <button 
-              className={mode === 'exit' ? 'active' : ''}
-              onClick={() => setMode('exit')}
-            >
-              🚪 Exit
-            </button>
+      {currentTab === 'cameras' && (
+        <div className="cameras-section">
+          <div className="cameras-grid">
+            <CameraComponent
+              title="Entry Camera"
+              mode="entry"
+              onProcessVehicle={handleVehicleProcess}
+              disabled={systemStatus !== 'active'}
+            />
+            <CameraComponent
+              title="Exit Camera"
+              mode="exit"
+              onProcessVehicle={handleVehicleProcess}
+              disabled={systemStatus !== 'active'}
+            />
           </div>
-
-          <div className="camera-controls">
-            {!isStreaming ? (
-              <button onClick={startCamera} className="btn-primary">
-                📷 Start Camera
-              </button>
+          
+          <div className="recent-activity">
+            <h3>🔔 Recent Activity</h3>
+            {recentActivity.length === 0 ? (
+              <p className="no-activity">No recent activity</p>
             ) : (
-              <div className="camera-actions">
-                <button onClick={captureAndAnalyze} disabled={loading} className="btn-primary">
-                  {loading ? '🔄 Analyzing...' : '📸 Capture & Analyze'}
-                </button>
-                <button onClick={stopCamera} className="btn-secondary">
-                  ⏹️ Stop Camera
-                </button>
+              <div className="activity-list">
+                {recentActivity.map((activity, index) => (
+                  <div key={index} className={`activity-item ${activity.type}`}>
+                    <div className="activity-time">{activity.time}</div>
+                    <div className="activity-message">{activity.message}</div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
-
-          <div className="file-upload">
-            <input 
-              type="file" 
-              accept="image/*" 
-              onChange={handleFileUpload}
-              disabled={loading}
-              className="file-input"
-            />
-            <label>Or upload an image file</label>
-          </div>
-
-          {isStreaming && (
-            <div className="video-container">
-              <video 
-                ref={videoRef} 
-                autoPlay 
-                playsInline 
-                className="video-stream"
-              />
-              <canvas 
-                ref={canvasRef} 
-                style={{ display: 'none' }}
-              />
-            </div>
-          )}
-
-          {error && (
-            <div className="error-message">
-              ⚠️ {error}
-            </div>
-          )}
-
-          {ocrResult && (
-            <div className="ocr-results">
-              <h3>🔍 OCR Results</h3>
-              
-              {ocrResult.vehicle_number ? (
-                <div className="license-plate-result">
-                  <h4>Detected License Plate:</h4>
-                  <div className="license-plate">
-                    <span className="plate-number">{ocrResult.vehicle_number}</span>
-                    <span className="confidence">Confidence: {(ocrResult.confidence * 100).toFixed(1)}%</span>
-                  </div>
-                  
-                  <div className="action-buttons">
-                    {mode === 'entry' ? (
-                      <button 
-                        onClick={() => processVehicleEntry(ocrResult.vehicle_number)}
-                        disabled={loading}
-                        className="btn-success"
-                      >
-                        ✅ Record Entry
-                      </button>
-                    ) : (
-                      <button 
-                        onClick={() => processVehicleExit(ocrResult.vehicle_number)}
-                        disabled={loading}
-                        className="btn-danger"
-                      >
-                        🚪 Process Exit
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="no-plate-detected">
-                  <p>❌ No license plate detected</p>
-                  <details>
-                    <summary>All Detected Text ({ocrResult.all_text.length} items)</summary>
-                    <ul>
-                      {ocrResult.all_text.map((text, index) => (
-                        <li key={index}>{text}</li>
-                      ))}
-                    </ul>
-                  </details>
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 
