@@ -101,6 +101,27 @@ def calculate_parking_fee(entry_time: datetime, exit_time: datetime) -> tuple:
     
     return duration_minutes, fee
 
+async def mock_ocr_analyze(image_content: bytes) -> OCRResult:
+    """Mock OCR analysis for demo purposes when Google Vision API is not available"""
+    # For demo purposes, generate a mock license plate
+    import random
+    import string
+    
+    # Generate a random Indian license plate format
+    state_codes = ["MH", "KA", "DL", "TN", "AP", "UP", "WB", "GJ", "RJ", "MP"]
+    state = random.choice(state_codes)
+    district = random.randint(1, 99)
+    series = ''.join(random.choices(string.ascii_uppercase, k=2))
+    number = random.randint(1000, 9999)
+    
+    mock_plate = f"{state}{district:02d}{series}{number}"
+    
+    return OCRResult(
+        vehicle_number=mock_plate,
+        confidence=0.8,
+        all_text=[mock_plate, "MOCK", "OCR", "DEMO"]
+    )
+
 @api_router.post("/ocr/analyze", response_model=OCRResult)
 async def analyze_image(file: UploadFile = File(...)):
     """Analyze uploaded image for license plate using Google Vision API"""
